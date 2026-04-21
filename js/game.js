@@ -1,26 +1,36 @@
-// Game Logic: AI, turns, comparative stats
+// Game Logic: AI, turns, comparative stats, multiplayer hooks
 
 const game = {
     playerDeck: [],
     aiDeck: [],
+    middlePot: [],
     isPlayerTurn: true,
     selectedStat: null,
     inRound: false,
+    isMultiplayer: false,
 
-    start: function() {
-        // Shuffle and deal cards
+    shuffleAndDeal: function() {
         let deck = [...cardsData];
-        // Basic shuffle
         for (let i = deck.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [deck[i], deck[j]] = [deck[j], deck[i]];
         }
-
         const half = Math.ceil(deck.length / 2);    
         this.playerDeck = deck.slice(0, half);
         this.aiDeck = deck.slice(half);
+    },
 
+    start: function() {
+        this.isMultiplayer = false;
+        this.shuffleAndDeal();
         this.isPlayerTurn = true;
+        this.updateScores();
+        this.nextRound();
+    },
+
+    startMultiplayer: function(isHost) {
+        this.isMultiplayer = true;
+        // isPlayerTurn already set by HandleData
         this.updateScores();
         this.nextRound();
     },
@@ -29,18 +39,27 @@ const game = {
         document.getElementById('player-score').innerText = this.playerDeck.length;
         document.getElementById('ai-score').innerText = this.aiDeck.length;
         
-        // Check win condition
         if(this.playerDeck.length === 0) {
             alert('You lost the game!');
             app.navigate('home');
-            return true; // Game over
+            this.handleEndGame(false);
+            return true;
         }
         if(this.aiDeck.length === 0) {
             alert('You won the game!');
             app.navigate('home');
-            return true; // Game over
+            this.handleEndGame(true);
+            return true;
         }
         return false;
+    },
+
+    handleEndGame: function(won) {
+        if(!won) return;
+        // Reward winner with coins and save
+        storage.saveData.coins += 500;
+        storage.saveProgress();
+        storage.updateUI();
     },
 
     nextRound: function() {
@@ -51,9 +70,7 @@ const game = {
         
         const playerCard = this.playerDeck[0];
         
-        // Render Player Card
         document.getElementById('player-slot').innerHTML = UI.renderCard(playerCard);
-        // Render AI Back Card
         document.getElementById('ai-slot').innerHTML = UI.renderCardBack();
 
         UI.renderStatsButtons(playerCard);
@@ -68,28 +85,28 @@ const game = {
         if (this.isPlayerTurn) {
             turnIndicator.textContent = dict['your_turn'];
             turnIndicator.style.color = "var(--neon-blue)";
-            // Enable all stat buttons
             document.querySelectorAll('.stat-btn').forEach(b => {
                 b.classList.remove('faded', 'active');
             });
         } else {
-            turnIndicator.textContent = dict['ai_turn'];
-            turnIndicator.style.color = "var(--gold)";
-            // Disable buttons for player
             document.querySelectorAll('.stat-btn').forEach(b => {
                 b.classList.add('faded');
                 b.classList.remove('active');
             });
 
-            // AI Logic - delay for effect, then auto-select
-            setTimeout(() => {
-                this.aiPlay();
-            }, 1500);
+            if (this.isMultiplayer) {
+                turnIndicator.textContent = "Waiting for Opponent...";
+                turnIndicator.style.color = "var(--gold)";
+            } else {
+                turnIndicator.textContent = dict['ai_turn'];
+                turnIndicator.style.color = "var(--gold)";
+                setTimeout(() => { this.aiPlay(); }, 1500);
+            }
         }
     },
 
     selectStat: function(statKey) {
-        if (!this.isPlayerTurn || this.inRound) return; // Not player's turn
+        if (!this.isPlayerTurn || this.inRound) return;
 
         document.querySelectorAll('.stat-btn').forEach(b => {
             b.classList.remove('active');
@@ -107,25 +124,19 @@ const game = {
     },
 
     aiPlay: function() {
+        if(this.inRound) return;
         const aiDifficulty = document.getElementById('ai-difficulty').value;
         const cardClass = this.aiDeck[0].stats;
         const keys = Object.keys(cardClass);
         
-        // Very basic difficulty logic
         let chosenKey = keys[0];
-        
         if (aiDifficulty === 'easy') {
-            // Random
             chosenKey = keys[Math.floor(Math.random() * keys.length)];
         } else {
-            // Normal/Hard - try to pick a generally good stat or one where higherIsBetter vs bad
-            // Simplified: Just picks highest relative normalized stat (not implemented normalized logic here, pseudo logic instead)
             let bestRawValue = -99999;
             keys.forEach(k => {
                 let v = cardClass[k].raw !== undefined ? cardClass[k].raw : cardClass[k].value;
-                if(!cardClass[k].higherIsBetter) {
-                    v = 1000 / (v || 1); // inverse logic for acceleration / baujahr
-                }
+                if(!cardClass[k].higherIsBetter) v = 1000 / (v || 1);
                 if (v > bestRawValue) {
                     bestRawValue = v;
                     chosenKey = k;
@@ -135,38 +146,33 @@ const game = {
 
         this.selectedStat = chosenKey;
         
-        // Highlight chosen stat on the UI even if faded
         document.querySelectorAll('.stat-btn').forEach(b => {
-            if(b.dataset.statKey === chosenKey) {
-                 b.classList.add('active');
-            }
+            if(b.dataset.statKey === chosenKey) b.classList.add('active');
         });
 
-        setTimeout(() => {
-            this.executeTurn();
-        }, 1000);
+        setTimeout(() => { this.executeTurn(); }, 1000);
     },
 
     playAction: function() {
         if(this.inRound) {
-            // Waiting for next round manually triggered or returning home
             this.nextRound();
         } else {
-            if(!this.selectedStat) {
-                // Must select stat first
-                return;
+            if(!this.selectedStat) return;
+            if(this.isMultiplayer && this.isPlayerTurn) {
+                multi.sendMove(this.selectedStat);
             }
             this.executeTurn();
         }
     },
 
-    executeTurn: function() {
+    executeTurn: function(isRemote = false) {
+        if(this.inRound) return;
         this.inRound = true;
         
         const playerCardData = this.playerDeck[0];
         const aiCardData = this.aiDeck[0];
 
-        // Reveal AI Card
+        // Reveal Opponent Card
         document.getElementById('ai-slot').innerHTML = UI.renderCard(aiCardData);
 
         const pStat = playerCardData.stats[this.selectedStat];
@@ -175,12 +181,14 @@ const game = {
         let pVal = pStat.raw !== undefined ? pStat.raw : pStat.value;
         let aVal = aStat.raw !== undefined ? aStat.raw : aStat.value;
         
-        let playerWins = false;
+        let playerWins = null; // null = tie
 
         if (pVal === aVal) {
-            // Tie - typical house rule is current turn holder wins or goes to middle.
-            // Simplified: turn holder wins on tie to break deadlocks
-            playerWins = this.isPlayerTurn;
+            if (storage.saveData.rules.draw_to_middle) {
+                playerWins = null;
+            } else {
+                playerWins = this.isPlayerTurn; // house rule: turn holder wins ties
+            }
         } else if (pStat.higherIsBetter) {
             playerWins = pVal > aVal;
         } else {
@@ -190,28 +198,52 @@ const game = {
         const playBtn = document.getElementById('play-btn');
         let dict = langDict[app.currentLanguage] || langDict['en'];
 
-        if (playerWins) {
-            this.isPlayerTurn = true; // Winner keeps turn
-            // Winner takes loser's card + put their own back
+        if (playerWins === null) {
+            // Draw
+            this.middlePot.push(this.playerDeck.shift());
+            this.middlePot.push(this.aiDeck.shift());
+            playBtn.innerText = "It's a Draw! Cards to Middle Pot.";
+            playBtn.style.background = "#6c757d";
+            // Next turn holder? Standard rule: turn holder keeps turn on draw
+        } else if (playerWins) {
             this.playerDeck.push(this.aiDeck.shift());
             this.playerDeck.push(this.playerDeck.shift());
+            // Take middle pot
+            while(this.middlePot.length > 0) {
+                this.playerDeck.push(this.middlePot.pop());
+            }
+
             playBtn.innerText = "You Win! " + dict['action_play'] + " next";
             playBtn.style.background = "#28a745";
+            
+            this.isPlayerTurn = (storage.saveData.rules.winner_keeps_turn !== false);
         } else {
-            this.isPlayerTurn = false;
-            // AI takes player's card + put their own back
             this.aiDeck.push(this.playerDeck.shift());
             this.aiDeck.push(this.aiDeck.shift());
-            playBtn.innerText = "AI Wins Round. Next...";
+            // AI takes middle pot
+            while(this.middlePot.length > 0) {
+                this.aiDeck.push(this.middlePot.pop());
+            }
+
+            playBtn.innerText = (this.isMultiplayer ? "Opponent" : "AI") + " Wins Round. Next...";
             playBtn.style.background = "#dc3545";
+
+            this.isPlayerTurn = (storage.saveData.rules.winner_keeps_turn === false);
         }
 
-        // Apply a visual cue
+        if(isRemote && this.isMultiplayer) {
+            document.querySelectorAll('.stat-btn').forEach(b => {
+                if(b.dataset.statKey === this.selectedStat) {
+                    b.classList.remove('faded');
+                    b.classList.add('active');
+                }
+            });
+        }
+
         document.querySelectorAll(`.c-stat-row[data-stat="${this.selectedStat}"]`).forEach(row => {
             row.classList.add('highlight');
         });
 
-        // The playAction button logic handle will route back to nextRound()
         playBtn.classList.remove('ready');
     }
 };

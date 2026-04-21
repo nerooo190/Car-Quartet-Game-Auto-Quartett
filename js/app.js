@@ -5,6 +5,7 @@ const app = {
     animEnabled: true,
     
     init: function() {
+        storage.init(); // Initialize auth and save data
         this.applyLanguage();
         UI.populateGarage();
         
@@ -37,16 +38,19 @@ const app = {
             
             // Re-highlight nav tab
             const navMap = {
-                'home': 0, 'garage': 1, 'leaderboard': 2
+                'home': 0, 'garage': 1, 'leaderboard': 2, 'multiplayer': null
             };
-            if(navMap[screenId] !== undefined) {
+            if(navMap[screenId] !== undefined && navMap[screenId] !== null) {
                 document.querySelectorAll('.nav-item')[navMap[screenId]].classList.add('active');
             }
         } else {
             // In Game
             document.getElementById('status-bar').classList.add('hidden');
             document.getElementById('bottom-nav').classList.add('hidden');
-            game.start();
+            // Only start local AI game if not already in a multiplayer session
+            if (!game.isMultiplayer) {
+                game.start();
+            }
         }
     },
 
